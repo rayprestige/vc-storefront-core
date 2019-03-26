@@ -167,7 +167,7 @@ namespace VirtoCommerce.Storefront.Domain
                 cacheEntry.AddExpirationToken(CatalogCacheRegion.CreateChangeToken());
                 cacheEntry.AddExpirationToken(_apiChangesWatcher.CreateChangeToken());
 
-                criteria = criteria.Clone();
+                criteria = criteria.Clone() as CategorySearchCriteria;
                 var searchCriteria = criteria.ToCategorySearchCriteriaDto(workContext);
                 return await _searchApi.SearchCategoriesAsync(searchCriteria);
 
@@ -207,7 +207,7 @@ namespace VirtoCommerce.Storefront.Domain
                 cacheEntry.AddExpirationToken(CatalogCacheRegion.CreateChangeToken());
                 cacheEntry.AddExpirationToken(_apiChangesWatcher.CreateChangeToken());
 
-                criteria = criteria.Clone();
+                criteria = criteria.Clone() as ProductSearchCriteria;
 
                 var searchCriteria = criteria.ToProductSearchCriteriaDto(workContext);
                 var result = await _searchApi.SearchProductsAsync(searchCriteria);
@@ -351,7 +351,7 @@ namespace VirtoCommerce.Storefront.Domain
                            cacheEntry.AddExpirationToken(_apiChangesWatcher.CreateChangeToken());
                            return _productsApi.SearchProductAssociations(criteria.ToProductAssociationSearchCriteriaDto());
                        });
-                    //Load products for resulting associations (do not handle categories link TODO:)
+                    //Load products for resulting associations
                     var associatedProducts = GetProductsAsync(searchResult.Results.Select(x => x.AssociatedObjectId).ToArray(), criteria.ResponseGroup).GetAwaiter().GetResult();
                     var result = new List<ProductAssociation>();
                     foreach (var associationDto in searchResult.Results)

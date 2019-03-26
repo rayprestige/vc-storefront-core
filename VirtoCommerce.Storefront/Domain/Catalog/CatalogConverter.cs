@@ -273,7 +273,10 @@ namespace VirtoCommerce.Storefront.Domain
         {
             var result = new Image
             {
-                Url = imageDto.Url.RemoveLeadingUriScheme()
+                Url = imageDto.Url.RemoveLeadingUriScheme(),
+                SortOrder = imageDto.SortOrder,
+                Group = imageDto.Group,
+                LanguageCode = imageDto.LanguageCode
             };
 
             return result;
@@ -417,6 +420,7 @@ namespace VirtoCommerce.Storefront.Domain
                 CatalogId = product.CatalogId,
                 CategoryId = product.CategoryId,
                 Outline = product.Outline,
+                Code = product.Sku,
                 ProductId = product.Id,
                 Quantity = 1,
                 InStockQuantity = product.Inventory != null && product.Inventory.InStockQuantity.HasValue ? (int)product.Inventory.InStockQuantity.Value : 0,

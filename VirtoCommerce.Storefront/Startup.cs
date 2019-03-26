@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Unicode;
-using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.ApplicationInsights.Extensibility.Implementation;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.WebEncoders;
 using Newtonsoft.Json;
+using Swashbuckle.AspNetCore.Swagger;
 using VirtoCommerce.LiquidThemeEngine;
 using VirtoCommerce.Storefront.Binders;
 using VirtoCommerce.Storefront.Caching;
@@ -27,8 +27,10 @@ using VirtoCommerce.Storefront.Domain;
 using VirtoCommerce.Storefront.Domain.Cart;
 using VirtoCommerce.Storefront.Domain.Security;
 using VirtoCommerce.Storefront.Extensions;
+using VirtoCommerce.Storefront.Filters;
 using VirtoCommerce.Storefront.Infrastructure;
 using VirtoCommerce.Storefront.Infrastructure.ApplicationInsights;
+using VirtoCommerce.Storefront.Infrastructure.Swagger;
 using VirtoCommerce.Storefront.JsonConverters;
 using VirtoCommerce.Storefront.Middleware;
 using VirtoCommerce.Storefront.Model;
@@ -75,8 +77,6 @@ namespace VirtoCommerce.Storefront
 
             services.Configure<StorefrontOptions>(Configuration.GetSection("VirtoCommerce"));
 
-            services.AddAntiforgery(options => options.HeaderName = "X-XSRF-TOKEN");
-
             //The IHttpContextAccessor service is not registered by default
             //https://github.com/aspnet/Hosting/issues/793
             services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
@@ -108,6 +108,7 @@ namespace VirtoCommerce.Storefront
             services.AddSingleton<IBlobChangesWatcher, BlobChangesWatcher>();
             services.AddTransient<ICartBuilder, CartBuilder>();
             services.AddTransient<ICartService, CartService>();
+            services.AddTransient<AngularAntiforgeryCookieResultFilter>();
 
             //Register events framework dependencies
             services.AddSingleton(new InProcessBus());
@@ -140,7 +141,7 @@ namespace VirtoCommerce.Storefront
                     options.Container = contentConnectionString.RootPath;
                     options.ConnectionString = contentConnectionString.ConnectionString;
                     options.PollForChanges = azureBlobOptions.PollForChanges;
-                    options.ChangesPoolingInterval = azureBlobOptions.ChangesPoolingInterval;
+                    options.ChangesPollingInterval = azureBlobOptions.ChangesPollingInterval;
                 });
             }
             else
@@ -245,6 +246,7 @@ namespace VirtoCommerce.Storefront
             });
 
             var snapshotProvider = services.BuildServiceProvider();
+            services.AddAntiforgery(options => options.HeaderName = "X-XSRF-TOKEN");
             services.AddMvc(options =>
             {
                 //Workaround to avoid 'Null effective policy causing exception' (on logout)
@@ -258,6 +260,11 @@ namespace VirtoCommerce.Storefront
                     Duration = (int)TimeSpan.FromHours(1).TotalSeconds,
                     VaryByHeader = "host"
                 });
+
+                options.Filters.AddService(typeof(AngularAntiforgeryCookieResultFilter));
+
+                // To include only Api controllers to swagger document
+                options.Conventions.Add(new ApiExplorerApiControllersConvention());
             }).AddJsonOptions(options =>
             {
                 options.SerializerSettings.DefaultValueHandling = DefaultValueHandling.Include;
@@ -284,7 +291,7 @@ namespace VirtoCommerce.Storefront
 
             services.AddApplicationInsightsTelemetry();
             services.AddApplicationInsightsExtensions(Configuration);
-            services.AddAntiforgery(options => options.HeaderName = "X-XSRF-TOKEN");
+
 
             //https://github.com/aspnet/HttpAbstractions/issues/315
             //Changing the default html encoding options, to not encode non-Latin characters
@@ -295,6 +302,33 @@ namespace VirtoCommerce.Storefront
                 options.IncludeSubDomains = true;
                 options.MaxAge = TimeSpan.FromDays(30);
             });
+
+            // Register the Swagger generator, defining 1 or more Swagger documents
+            services.AddSwaggerGen(c =>
+            {
+                c.SwaggerDoc("v1", new Info { Title = "Storefront REST API documentation", Version = "v1" });
+                c.DescribeAllEnumsAsStrings();
+                c.IgnoreObsoleteProperties();
+                c.IgnoreObsoleteActions();
+                // To include 401 response type to actions that requires Authorization
+                c.OperationFilter<AuthResponsesOperationFilter>();
+                c.OperationFilter<OptionalParametersFilter>();
+                c.OperationFilter<FileResponseTypeFilter>();
+                // Workaround of problem with int default value for enum parameter: https://github.com/domaindrivendev/Swashbuckle.AspNetCore/issues/868
+                c.ParameterFilter<EnumDefaultValueParameterFilter>();
+
+                // To avoid errors with repeating type names
+                // Also need to replace some symbols for RFC3986-compliance: https://github.com/domaindrivendev/Swashbuckle.AspNetCore/issues/752
+                c.CustomSchemaIds((type) => type.ToString()
+                    .Replace("[", "_")
+                    .Replace("]", "_")
+                    .Replace(",", "-")
+                    .Replace("`", "_")
+                );
+            });
+
+            services.AddResponseCompression();
+
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -314,6 +348,8 @@ namespace VirtoCommerce.Storefront
 
             app.UseResponseCaching();
 
+            app.UseResponseCompression();
+
             app.UseStaticFiles();
             app.UseCookiePolicy();
 
@@ -323,11 +359,13 @@ namespace VirtoCommerce.Storefront
             app.UseMiddleware<StoreMaintenanceMiddleware>();
             app.UseMiddleware<NoLiquidThemeMiddleware>();
             app.UseMiddleware<CreateStorefrontRolesMiddleware>();
-            app.UseMiddleware<AntiforgeryTokenMiddleware>();
             app.UseMiddleware<ApiErrorHandlingMiddleware>();
 
 
             app.UseStatusCodePagesWithReExecute("/error/{0}");
+
+            // Enable middleware to serve generated Swagger as a JSON endpoint.
+            app.UseSwagger(c => c.RouteTemplate = "docs/{documentName}/docs.json");
 
             var rewriteOptions = new RewriteOptions();
             //Load IIS url rewrite rules from external file
